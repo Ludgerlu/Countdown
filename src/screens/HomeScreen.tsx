@@ -1,47 +1,339 @@
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 
 import {
   View,
   Text,
   StyleSheet,
-  Pressable,
   SafeAreaView,
   StatusBar,
   ScrollView,
+  Pressable,
+  Modal,
+  TextInput,
+  Alert,
+  ActivityIndicator,
 } from 'react-native';
 
-import useCountdown from '../hooks/useCountdown';
+import TaskCard from '../components/TaskCard';
 
-const durations = [1, 5, 10, 15, 30];
+import FocusScreen from './FocusScreen';
+
+import { Task, TaskFormData, TaskPriority } from '../types/task';
+
+import { taskStorage } from '../storage/taskStorage';
+
+type FilterType = 'all' | 'todo' | 'completed';
 
 export default function HomeScreen() {
 
-  const [selectedMinutes, setSelectedMinutes] = useState(5);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
 
-  const {
-    status,
-    formattedTime,
-    start,
-    pause,
-    resume,
-    reset,
-  } = useCountdown(selectedMinutes);
+  const [loading, setLoading] = useState(true);
+  const [showFocus, setShowFocus] = useState(false);
+  const [filter, setFilter] = useState<FilterType>('all');
 
-  // Changer la durée
-  const selectDuration = (duration: number) => {
-    if (status !== 'idle') return;
+  const [modalVisible, setModalVisible] = useState(false);
+  const [editingTask, setEditingTask] = useState<Task | null>(null);
 
-    setSelectedMinutes(duration);
-    reset(duration);
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [estimatedMinutes, setEstimatedMinutes] = useState('30');
+  const [priority, setPriority] = useState<TaskPriority>('medium');
+
+  // CHARGEMENT INITIAL
+  useEffect(() => {
+
+    const loadData = async () => {
+      try {
+
+        const savedTasks = await taskStorage.getTasks();
+        const savedActiveId = await taskStorage.getActiveTaskId();
+
+        const normalizedTasks = savedTasks.map(task => ({
+            ...task,
+            actualSeconds: task.actualSeconds ?? 0,
+        }));
+
+        setTasks(normalizedTasks);
+
+        const validActiveTask = savedTasks.find(
+          task =>
+            task.id === savedActiveId &&
+            task.status === 'in_progress'
+        );
+
+        setActiveTaskId(validActiveTask ? validActiveTask.id : null);
+
+      } catch (error) {
+        Alert.alert('Erreur', 'Impossible de charger les tâches.');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadData();
+
+  }, []);
+
+  // SAUVEGARDE DES TÂCHES
+  useEffect(() => {
+
+    if (!loading) {
+      taskStorage.saveTasks(tasks).catch(error => {
+        console.error(error);
+      });
+    }
+
+  }, [tasks, loading]);
+
+  // SAUVEGARDE DE LA TÂCHE ACTIVE
+  useEffect(() => {
+
+    if (!loading) {
+      taskStorage.saveActiveTaskId(activeTaskId).catch(error => {
+        console.error(error);
+      });
+    }
+
+  }, [activeTaskId, loading]);
+
+  // OUVRIR LE FORMULAIRE
+  const openAddModal = () => {
+
+    setEditingTask(null);
+
+    setTitle('');
+    setDescription('');
+    setEstimatedMinutes('30');
+    setPriority('medium');
+
+    setModalVisible(true);
+
   };
 
-  // Réinitialiser le compteur
-  const handleReset = () => {
-    reset(selectedMinutes);
+  // OUVRIR LE FORMULAIRE DE MODIFICATION
+  const openEditModal = (task: Task) => {
+
+    setEditingTask(task);
+
+    setTitle(task.title);
+    setDescription(task.description);
+    setEstimatedMinutes(String(task.estimatedMinutes));
+    setPriority(task.priority);
+
+    setModalVisible(true);
+
   };
+
+  // ENREGISTRER UNE TÂCHE
+  const saveTask = () => {
+
+    
+    const cleanTitle = title.trim();
+    const duration = Number(estimatedMinutes);
+
+    if (!cleanTitle) {
+      Alert.alert('Attention', 'Le titre de la tâche est obligatoire.');
+      return;
+    }
+
+    if (
+      !Number.isInteger(duration) ||
+      duration < 1 ||
+      duration > 1440
+    ) {
+      Alert.alert(
+        'Durée invalide',
+        'Choisis une durée comprise entre 1 et 1440 minutes.'
+      );
+      return;
+    }
+
+    const now = new Date().toISOString();
+
+    const formData: TaskFormData = {
+
+      title: cleanTitle,
+      description: description.trim(),
+      estimatedMinutes: duration,
+      priority,
+    };
+
+    if (editingTask) {
+
+      setTasks(previous =>
+        previous.map(task =>
+          task.id === editingTask.id
+            ? {
+                ...task,
+                ...formData,
+                updatedAt: now,
+              }
+            : task
+        )
+      );
+
+    } else {
+
+      const newTask: Task = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        ...formData,
+        actualSeconds: 0,
+        status: 'todo',
+        rating: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      setTasks(previous => [newTask, ...previous]);
+
+    }
+
+    setModalVisible(false);
+
+  };
+
+  // SUPPRIMER UNE TÂCHE
+  const deleteTask = (task: Task) => {
+
+    Alert.alert(
+      'Supprimer la tâche',
+      `Veux-tu vraiment supprimer "${task.title}" ?`,
+      [
+        {
+          text: 'Annuler',
+          style: 'cancel',
+        },
+        {
+          text: 'Supprimer',
+          style: 'destructive',
+          onPress: () => {
+
+            setTasks(previous =>
+              previous.filter(item => item.id !== task.id)
+            );
+
+            if (activeTaskId === task.id) {
+              setActiveTaskId(null);
+            }
+
+          },
+        },
+      ]
+    );
+
+  };
+
+  // SÉLECTIONNER UNE TÂCHE
+  const selectTask = (task: Task) => {
+
+    if (task.status === 'completed') return;
+
+    // Désélectionner la tâche active
+    if (activeTaskId === task.id) {
+
+      Alert.alert(
+        'Libérer la tâche',
+        'Veux-tu désélectionner cette tâche ?',
+        [
+          { text: 'Annuler', style: 'cancel' },
+          {
+            text: 'Libérer',
+            onPress: () => {
+
+              setTasks(previous =>
+                previous.map(item =>
+                  item.id === task.id
+                    ? {
+                        ...item,
+                        status: 'todo',
+                        updatedAt: new Date().toISOString(),
+                      }
+                    : item
+                )
+              );
+
+              setActiveTaskId(null);
+
+            },
+          },
+        ]
+      );
+
+      return;
+    }
+
+    // Vérifier si une autre tâche est déjà active
+    if (activeTaskId !== null) {
+
+      Alert.alert(
+        'Une tâche est déjà active',
+        'Libère ou termine la tâche actuelle avant d\'en sélectionner une autre.'
+      );
+
+      return;
+    }
+
+    setTasks(previous =>
+      previous.map(item =>
+        item.id === task.id
+          ? {
+              ...item,
+              status: 'in_progress',
+              updatedAt: new Date().toISOString(),
+            }
+          : item
+      )
+    );
+
+    setActiveTaskId(task.id);
+
+  };
+
+  // FILTRER LES TÂCHES
+  const filteredTasks = tasks.filter(task => {
+
+    if (filter === 'todo') {
+      return task.status === 'todo' ||
+        task.status === 'in_progress';
+    }
+
+    if (filter === 'completed') {
+      return task.status === 'completed';
+    }
+
+    return true;
+
+  });
+
+  const completedCount = tasks.filter(
+    task => task.status === 'completed'
+  ).length;
+
+  const activeTask = tasks.find(
+    task => task.id === activeTaskId
+  );
+
+  // ÉCRAN DE CHARGEMENT
+  if (loading) {
+
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#FF923E" />
+          <Text style={styles.loadingText}>
+            Loading your tasks...
+          </Text>
+        </View>
+      </SafeAreaView>
+    );
+
+  }
 
   return (
+
     <SafeAreaView style={styles.safeArea}>
 
       <StatusBar
@@ -53,182 +345,180 @@ export default function HomeScreen() {
         contentContainerStyle={styles.container}
         showsVerticalScrollIndicator={false}
       >
+        <View
+        style={{
+            flex: 1,
+            display: showFocus ? 'none' : 'flex',
+        }}
+        >
 
         {/* HEADER */}
         <View style={styles.header}>
-          <Text style={styles.logo}>Countdown.</Text>
+
+          <View>
+            <Text style={styles.logo}>Countdown.</Text>
+            <Text style={styles.headerSubtitle}>
+              Make time for you! ✨
+            </Text>
+          </View>
 
           <View style={styles.headerIcon}>
             <Text style={styles.sun}>☀️</Text>
           </View>
+
         </View>
 
-        {/* INTRODUCTION */}
-        <View style={styles.intro}>
-          <Text style={styles.heading}>
-            Make time for you!
-          </Text>
+        {/* SUMMARY */}
+        <View style={styles.summary}>
 
-          <Text style={styles.description}>
-            A little time just for yourself ✨
-          </Text>
-        </View>
-
-        {/* TIMER CARD */}
-        <View style={styles.timerCard}>
-
-          <View style={styles.cardHeader}>
-            <Text style={styles.cardLabel}>
-              YOUR COUNTDOWN
+          <View style={styles.summaryText}>
+            <Text style={styles.summaryTitle}>
+              Your tasks
             </Text>
 
-            <View style={[
-              styles.statusBadge,
-              status === 'running' && styles.runningBadge,
-              status === 'paused' && styles.pausedBadge,
-              status === 'finished' && styles.finishedBadge,
-            ]}>
-              <Text style={styles.statusText}>
-                {status === 'idle' && 'READY'}
-                {status === 'running' && 'RUNNING'}
-                {status === 'paused' && 'PAUSED'}
-                {status === 'finished' && 'FINISHED'}
+            <Text style={styles.summarySubtitle}>
+              Small steps, big achievements.
+            </Text>
+          </View>
+
+          <View style={styles.summaryCount}>
+            <Text style={styles.countNumber}>
+              {completedCount}/{tasks.length}
+            </Text>
+
+            <Text style={styles.countLabel}>
+              Completed
+            </Text>
+          </View>
+
+        </View>
+
+        {/* ACTIVE TASK */}
+        {activeTask && (
+          <View style={styles.activeBanner}>
+
+            <Text style={styles.activeBannerLabel}>
+              CURRENT TASK
+            </Text>
+
+            <Text style={styles.activeBannerTitle}>
+              {activeTask.title}
+            </Text>
+
+            <Text style={styles.activeBannerSubtitle}>
+              Estimated time: {activeTask.estimatedMinutes} min
+            </Text>
+
+            <Text style={styles.activeBannerHint}>
+              Complete or release this task before choosing another.
+            </Text>
+
+            <Pressable
+                style={styles.focusButton}
+                onPress={() => setShowFocus(true)}
+            >
+            <Text style={styles.focusButtonText}>
+                ▶  Start focus
+            </Text>
+            </Pressable>
+
+          </View>
+        )}
+
+        {/* FILTERS */}
+        <View style={styles.filterContainer}>
+
+          {[
+            { key: 'all', label: 'All' },
+            { key: 'todo', label: 'To do' },
+            { key: 'completed', label: 'Completed' },
+          ].map(item => (
+
+            <Pressable
+              key={item.key}
+              onPress={() => setFilter(item.key as FilterType)}
+              style={[
+                styles.filterButton,
+                filter === item.key && styles.filterButtonActive,
+              ]}
+            >
+              <Text style={[
+                styles.filterText,
+                filter === item.key && styles.filterTextActive,
+              ]}>
+                {item.label}
               </Text>
-            </View>
-          </View>
+            </Pressable>
 
-          {/* TIMER DISPLAY */}
-          <View style={styles.timerContainer}>
+          ))}
 
-            <Text style={[
-              styles.timer,
-              status === 'finished' && styles.finishedTimer,
-            ]}>
-              {formattedTime}
-            </Text>
+        </View>
 
-            <Text style={styles.timerDescription}>
-              Minutes : Seconds
-            </Text>
+        {/* TASK LIST */}
+        <View style={styles.taskHeader}>
 
-            <Text style={styles.hourglass}>
-              {status === 'finished' ? '🎉' : '⏳'}
-            </Text>
-
-          </View>
-
-          {/* DURATION SELECTOR */}
-          <Text style={styles.sectionLabel}>
-            CHOOSE YOUR TIME
+          <Text style={styles.sectionTitle}>
+            My list
           </Text>
 
-          <View style={styles.durationContainer}>
-
-            {durations.map((duration) => {
-
-              const isSelected = selectedMinutes === duration;
-
-              return (
-                <Pressable
-                  key={duration}
-                  disabled={status !== 'idle'}
-                  onPress={() => selectDuration(duration)}
-                  style={[
-                    styles.durationButton,
-                    isSelected && styles.durationButtonActive,
-                    status !== 'idle' && styles.disabledButton,
-                  ]}
-                >
-                  <Text style={[
-                    styles.durationText,
-                    isSelected && styles.durationTextActive,
-                  ]}>
-                    {duration} min
-                  </Text>
-                </Pressable>
-              );
-
-            })}
-
-          </View>
-
-          {/* CONTROL BUTTONS */}
-          <View style={styles.controls}>
-
-            {status === 'idle' && (
-              <Pressable
-                style={styles.startButton}
-                onPress={start}
-              >
-                <Text style={styles.mainButtonText}>
-                  ▶  Start
-                </Text>
-              </Pressable>
-            )}
-
-            {status === 'running' && (
-              <Pressable
-                style={[styles.startButton, styles.pauseButton]}
-                onPress={pause}
-              >
-                <Text style={styles.mainButtonText}>
-                  ⏸  Pause
-                </Text>
-              </Pressable>
-            )}
-
-            {status === 'paused' && (
-              <Pressable
-                style={styles.startButton}
-                onPress={resume}
-              >
-                <Text style={styles.mainButtonText}>
-                  ▶  Resume
-                </Text>
-              </Pressable>
-            )}
-
-            {status === 'finished' && (
-              <Pressable
-                style={[styles.startButton, styles.finishedButton]}
-                onPress={handleReset}
-              >
-                <Text style={styles.mainButtonText}>
-                  ↻  Restart
-                </Text>
-              </Pressable>
-            )}
-
-            {/* RESET BUTTON */}
-            {status !== 'idle' && status !== 'finished' && (
-              <Pressable
-                style={styles.resetButton}
-                onPress={handleReset}
-              >
-                <Text style={styles.resetButtonText}>
-                  ↻ Reset
-                </Text>
-              </Pressable>
-            )}
-
-          </View>
-
-          {/* FOOTER MESSAGE */}
-          <Text style={styles.cardFooter}>
-            {status === 'idle' &&
-              'Take a breath. Enjoy the moment.'}
-
-            {status === 'running' &&
-              'Stay focused. You got this! 💪'}
-
-            {status === 'paused' &&
-              'Take your time. Ready when you are.'}
-
-            {status === 'finished' &&
-              'Time is up! Great job! 🎊'}
+          <Text style={styles.taskCount}>
+            {filteredTasks.length} tasks
           </Text>
 
         </View>
+
+        {filteredTasks.length === 0 ? (
+
+          <View style={styles.emptyState}>
+
+            <Text style={styles.emptyEmoji}>
+              {filter === 'completed' ? '🎉' : '📝'}
+            </Text>
+
+            <Text style={styles.emptyTitle}>
+              {filter === 'completed'
+                ? 'No completed tasks yet'
+                : 'Your list is empty'}
+            </Text>
+
+            <Text style={styles.emptyDescription}>
+              {filter === 'completed'
+                ? 'Your achievements will appear here.'
+                : 'Add your first task and get started!'}
+            </Text>
+
+          </View>
+
+        ) : (
+
+          filteredTasks.map(task => (
+
+            <TaskCard
+              key={task.id}
+              task={task}
+              isActive={activeTaskId === task.id}
+              locked={
+                activeTaskId !== null &&
+                activeTaskId !== task.id
+              }
+              onSelect={selectTask}
+              onEdit={openEditModal}
+              onDelete={deleteTask}
+            />
+
+          ))
+
+        )}
+
+        {/* ADD BUTTON */}
+        <Pressable
+          style={styles.addButton}
+          onPress={openAddModal}
+        >
+          <Text style={styles.addButtonText}>
+            +  Add a new task
+          </Text>
+        </Pressable>
 
         {/* FOOTER */}
         <View style={styles.footer}>
@@ -237,9 +527,165 @@ export default function HomeScreen() {
           </Text>
         </View>
 
+
+
+        </View>
+
+        {activeTask && (
+        <View
+            style={{
+            flex: 1,
+            display: showFocus ? 'flex' : 'none',
+            }}
+        >
+            <FocusScreen
+            key={activeTask.id}
+            task={activeTask}
+            onBack={() => setShowFocus(false)}
+            onFinished={(actualSeconds) => {
+                setTasks(previous =>
+                previous.map(item =>
+                    item.id === activeTask.id
+                    ? {
+                        ...item,
+                        actualSeconds:
+                            (item.actualSeconds ?? 0) + actualSeconds,
+                        updatedAt: new Date().toISOString(),
+                        }
+                    : item
+                )
+                );
+            }}
+            />
+        </View>
+        )}
+
       </ScrollView>
+
+      {/* ADD / EDIT MODAL */}
+      <Modal
+        visible={modalVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setModalVisible(false)}
+      >
+
+        <View style={styles.modalOverlay}>
+
+          <View style={styles.modalContent}>
+
+            <View style={styles.modalHeader}>
+
+              <Text style={styles.modalTitle}>
+                {editingTask ? 'Edit task ✏️' : 'New task ✨'}
+              </Text>
+
+              <Pressable
+                onPress={() => setModalVisible(false)}
+              >
+                <Text style={styles.closeButton}>✕</Text>
+              </Pressable>
+
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false}>
+              
+              <Text style={styles.inputLabel}>
+                Task title *
+              </Text>
+
+              <TextInput
+                style={styles.input}
+                placeholder="What do you want to do?"
+                placeholderTextColor="#B9A99C"
+                value={title}
+                onChangeText={setTitle}
+                maxLength={100}
+              />
+
+              <Text style={styles.inputLabel}>
+                Description
+              </Text>
+
+              <TextInput
+                style={[styles.input, styles.textArea]}
+                placeholder="Add some details..."
+                placeholderTextColor="#B9A99C"
+                value={description}
+                onChangeText={setDescription}
+                multiline
+                maxLength={500}
+              />
+
+              <Text style={styles.inputLabel}>
+                Estimated time (minutes)
+              </Text>
+
+              <TextInput
+                style={styles.input}
+                placeholder="30"
+                placeholderTextColor="#B9A99C"
+                keyboardType="number-pad"
+                value={estimatedMinutes}
+                onChangeText={setEstimatedMinutes}
+                maxLength={4}
+              />
+
+              <Text style={styles.inputLabel}>
+                Priority
+              </Text>
+
+              <View style={styles.priorityContainer}>
+
+                {[
+                  { key: 'low', label: 'Low' },
+                  { key: 'medium', label: 'Medium' },
+                  { key: 'high', label: 'High' },
+                ].map(item => (
+
+                  <Pressable
+                    key={item.key}
+                    onPress={() => setPriority(item.key as TaskPriority)}
+                    style={[
+                      styles.priorityButton,
+                      priority === item.key &&
+                        styles.priorityButtonActive,
+                    ]}
+                  >
+                    <Text style={[
+                      styles.priorityButtonText,
+                      priority === item.key &&
+                        styles.priorityButtonTextActive,
+                    ]}>
+                      {item.label}
+                    </Text>
+                  </Pressable>
+
+                ))}
+
+              </View>
+
+              <Pressable
+                style={styles.saveButton}
+                onPress={saveTask}
+              >
+                <Text style={styles.saveButtonText}>
+                  {editingTask ? 'Save changes' : 'Create task'}
+                </Text>
+              </Pressable>
+
+            </ScrollView>
+
+          </View>
+
+        </View>
+
+      </Modal>
+
     </SafeAreaView>
+
   );
+
 }
 
 const styles = StyleSheet.create({
@@ -251,9 +697,20 @@ const styles = StyleSheet.create({
 
   container: {
     flexGrow: 1,
-    paddingHorizontal: 24,
-    paddingTop: 15,
-    paddingBottom: 25,
+    paddingHorizontal: 22,
+    paddingTop: 18,
+    paddingBottom: 30,
+  },
+
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  loadingText: {
+    color: '#8E7A6B',
+    marginTop: 12,
   },
 
   header: {
@@ -263,222 +720,312 @@ const styles = StyleSheet.create({
   },
 
   logo: {
-    fontSize: 23,
+    fontSize: 25,
     fontWeight: '900',
     color: '#302923',
   },
 
+  headerSubtitle: {
+    color: '#A18B7A',
+    fontSize: 12,
+    marginTop: 4,
+  },
+
   headerIcon: {
     backgroundColor: '#FFE2C2',
-    width: 45,
-    height: 45,
+    width: 46,
+    height: 46,
     borderRadius: 23,
-    alignItems: 'center',
     justifyContent: 'center',
+    alignItems: 'center',
   },
 
   sun: {
     fontSize: 22,
   },
 
-  intro: {
-    marginTop: 45,
-    marginBottom: 30,
-    alignItems: 'center',
-  },
-
-  heading: {
-    fontSize: 27,
-    fontWeight: '900',
-    color: '#302923',
-    textAlign: 'center',
-  },
-
-  description: {
-    fontSize: 14,
-    color: '#8E7A6B',
-    marginTop: 8,
-  },
-
-  timerCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 30,
-    padding: 22,
-
-    shadowColor: '#A77C57',
-    shadowOffset: {
-      width: 0,
-      height: 8,
-    },
-    shadowOpacity: 0.10,
-    shadowRadius: 15,
-    elevation: 5,
-  },
-
-  cardHeader: {
+  summary: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    marginTop: 35,
+    marginBottom: 22,
   },
 
-  cardLabel: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#8E7A6B',
-    letterSpacing: 1,
+  summaryText: {
+    flex: 1,
   },
 
-  statusBadge: {
-    backgroundColor: '#E7F7EA',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-  },
-
-  runningBadge: {
-    backgroundColor: '#E4F2FF',
-  },
-
-  pausedBadge: {
-    backgroundColor: '#FFF0D6',
-  },
-
-  finishedBadge: {
-    backgroundColor: '#FFE5E5',
-  },
-
-  statusText: {
-    color: '#3A9B55',
-    fontSize: 10,
-    fontWeight: '800',
-  },
-
-  timerContainer: {
-    alignItems: 'center',
-    paddingVertical: 35,
-  },
-
-  timer: {
-    fontSize: 65,
-    fontWeight: '900',
+  summaryTitle: {
     color: '#302923',
-    fontVariant: ['tabular-nums'],
+    fontSize: 26,
+    fontWeight: '900',
   },
 
-  finishedTimer: {
-    color: '#FF923E',
-  },
-
-  timerDescription: {
+  summarySubtitle: {
     color: '#A18B7A',
-    fontSize: 13,
+    fontSize: 12,
     marginTop: 5,
   },
 
-  hourglass: {
-    fontSize: 45,
-    marginTop: 15,
-  },
-
-  sectionLabel: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#8E7A6B',
-    marginBottom: 14,
-    letterSpacing: 1,
-  },
-
-  durationContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-    gap: 9,
-  },
-
-  durationButton: {
-    backgroundColor: '#FFF0E1',
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderRadius: 15,
-  },
-
-  durationButtonActive: {
-    backgroundColor: '#FF923E',
-  },
-
-  disabledButton: {
-    opacity: 0.6,
-  },
-
-  durationText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#8E6D55',
-  },
-
-  durationTextActive: {
-    color: '#FFFFFF',
-  },
-
-  controls: {
-    marginTop: 28,
-    gap: 12,
-  },
-
-  startButton: {
-    backgroundColor: '#FF923E',
-    paddingVertical: 18,
+  summaryCount: {
+    backgroundColor: '#FFE8D2',
     borderRadius: 18,
+    padding: 13,
     alignItems: 'center',
   },
 
-  pauseButton: {
-    backgroundColor: '#D99035',
-  },
-
-  finishedButton: {
-    backgroundColor: '#42A66A',
-  },
-
-  mainButtonText: {
-    color: '#FFFFFF',
-    fontSize: 17,
+  countNumber: {
+    color: '#D97829',
+    fontSize: 19,
     fontWeight: '900',
   },
 
-  resetButton: {
-    backgroundColor: '#FFF0E1',
-    paddingVertical: 15,
-    borderRadius: 16,
-    alignItems: 'center',
+  countLabel: {
+    color: '#9E7758',
+    fontSize: 10,
   },
 
-  resetButtonText: {
-    color: '#8E6D55',
-    fontSize: 15,
+  activeBanner: {
+    backgroundColor: '#FF923E',
+    padding: 18,
+    borderRadius: 22,
+    marginBottom: 22,
+  },
+
+  activeBannerLabel: {
+    color: '#FFF1E6',
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 1,
+  },
+
+  activeBannerTitle: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '900',
+    marginTop: 8,
+  },
+
+  activeBannerSubtitle: {
+    color: '#FFF1E6',
+    fontSize: 12,
+    marginTop: 5,
+  },
+
+  activeBannerHint: {
+    color: '#FFF1E6',
+    fontSize: 10,
+    marginTop: 12,
+  },
+
+  filterContainer: {
+    flexDirection: 'row',
+    gap: 9,
+    marginBottom: 25,
+  },
+
+  filterButton: {
+    paddingHorizontal: 15,
+    paddingVertical: 11,
+    borderRadius: 14,
+    backgroundColor: '#FFEBDD',
+  },
+
+  filterButtonActive: {
+    backgroundColor: '#FF923E',
+  },
+
+  filterText: {
+    color: '#98765B',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+
+  filterTextActive: {
+    color: '#FFFFFF',
+  },
+
+  taskHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 15,
+  },
+
+  sectionTitle: {
+    color: '#302923',
+    fontSize: 19,
+    fontWeight: '900',
+  },
+
+  taskCount: {
+    color: '#A18B7A',
+    fontSize: 12,
+  },
+
+  emptyState: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 22,
+    padding: 30,
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+
+  emptyEmoji: {
+    fontSize: 42,
+    marginBottom: 12,
+  },
+
+  emptyTitle: {
+    color: '#302923',
+    fontSize: 16,
     fontWeight: '800',
   },
 
-  buttonPressed: {
-    opacity: 0.75,
-    transform: [{ scale: 0.98 }],
-  },
-
-  cardFooter: {
-    textAlign: 'center',
+  emptyDescription: {
     color: '#A18B7A',
     fontSize: 12,
-    marginTop: 18,
+    marginTop: 8,
+    textAlign: 'center',
+  },
+
+  addButton: {
+    backgroundColor: '#FF923E',
+    borderRadius: 18,
+    paddingVertical: 17,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+
+  addButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '900',
+    fontSize: 15,
   },
 
   footer: {
     alignItems: 'center',
-    marginTop: 35,
+    marginTop: 30,
   },
 
   footerText: {
-    fontSize: 12,
     color: '#A18B7A',
+    fontSize: 11,
   },
+
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(48,41,35,0.45)',
+    justifyContent: 'flex-end',
+  },
+
+  modalContent: {
+    backgroundColor: '#FFF9F3',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    padding: 24,
+    paddingBottom: 35,
+    maxHeight: '90%',
+  },
+
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 25,
+  },
+
+  modalTitle: {
+    fontSize: 22,
+    color: '#302923',
+    fontWeight: '900',
+  },
+
+  closeButton: {
+    color: '#8E7A6B',
+    fontSize: 22,
+    padding: 5,
+  },
+
+  inputLabel: {
+    color: '#6F5A48',
+    fontSize: 12,
+    fontWeight: '800',
+    marginBottom: 9,
+    marginTop: 15,
+  },
+
+  input: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#F0E3D8',
+    borderRadius: 14,
+    paddingHorizontal: 15,
+    paddingVertical: 14,
+    fontSize: 14,
+    color: '#302923',
+  },
+
+  textArea: {
+    height: 90,
+    textAlignVertical: 'top',
+  },
+
+  priorityContainer: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+
+  priorityButton: {
+    flex: 1,
+    backgroundColor: '#FFEBDD',
+    paddingVertical: 13,
+    borderRadius: 13,
+    alignItems: 'center',
+  },
+
+  priorityButtonActive: {
+    backgroundColor: '#FF923E',
+  },
+
+  priorityButtonText: {
+    color: '#98765B',
+    fontWeight: '700',
+    fontSize: 12,
+  },
+
+  priorityButtonTextActive: {
+    color: '#FFFFFF',
+  },
+
+  saveButton: {
+    backgroundColor: '#FF923E',
+    paddingVertical: 17,
+    borderRadius: 16,
+    alignItems: 'center',
+    marginTop: 28,
+  },
+
+  saveButtonText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '900',
+  },
+
+  focusButton: {
+    backgroundColor: '#FFFFFF',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 14,
+    alignSelf: 'flex-start',
+    marginTop: 14,
+ },
+
+ focusButtonText: {
+    color: '#D97829',
+    fontSize: 13,
+    fontWeight: '900',
+ },
 
 });

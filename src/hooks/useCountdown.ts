@@ -1,151 +1,137 @@
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 
-export type TimerStatus =
-  | 'idle'
-  | 'running'
-  | 'paused'
-  | 'finished';
+type CountdownStatus = 'idle' | 'running' | 'paused' | 'finished';
 
-export default function useCountdown(initialMinutes: number) {
+export function useCountdown(initialMinutes: number) {
+  const totalMs = initialMinutes * 60 * 1000;
 
-  const [remainingMs, setRemainingMs] = useState(
-    initialMinutes * 60 * 1000
-  );
+  const [remainingMs, setRemainingMs] = useState(totalMs);
+  const [elapsedMs, setElapsedMs] = useState(0);
+  const [status, setStatus] = useState<CountdownStatus>('idle');
 
-  const [status, setStatus] = useState<TimerStatus>('idle');
-
-  // Date exacte à laquelle le compte à rebours doit terminer
   const endTimeRef = useRef<number | null>(null);
+  const segmentStartRef = useRef<number | null>(null);
+  const elapsedBeforeSegmentRef = useRef(0);
 
-  // Mettre à jour le temps restant
   const updateTimer = useCallback(() => {
+    if (endTimeRef.current === null || segmentStartRef.current === null) {
+      return;
+    }
 
-    if (endTimeRef.current === null) return;
+    const now = Date.now();
+    const remaining = Math.max(0, endTimeRef.current - now);
+    const elapsed =
+      elapsedBeforeSegmentRef.current +
+      (now - segmentStartRef.current);
 
-    const difference = Math.max(
-      0,
-      endTimeRef.current - Date.now()
-    );
+    setRemainingMs(remaining);
+    setElapsedMs(elapsed);
 
-    setRemainingMs(difference);
-
-    // Détection de la fin du compte à rebours
-    if (difference <= 0) {
-      endTimeRef.current = null;
+    if (remaining <= 0) {
       setRemainingMs(0);
+      setElapsedMs(elapsedBeforeSegmentRef.current +
+        (endTimeRef.current - segmentStartRef.current));
+
+      endTimeRef.current = null;
+      segmentStartRef.current = null;
       setStatus('finished');
     }
-
   }, []);
 
-  // Démarrer
   const start = useCallback(() => {
-
     if (status !== 'idle' || remainingMs <= 0) return;
 
-    endTimeRef.current = Date.now() + remainingMs;
+    const now = Date.now();
+    segmentStartRef.current = now;
+    endTimeRef.current = now + remainingMs;
+    elapsedBeforeSegmentRef.current = elapsedMs;
 
     setStatus('running');
+  }, [status, remainingMs, elapsedMs]);
 
-  }, [status, remainingMs]);
-
-  // Mettre en pause
   const pause = useCallback(() => {
-
     if (status !== 'running') return;
 
-    if (endTimeRef.current !== null) {
-      const difference = Math.max(
-        0,
-        endTimeRef.current - Date.now()
-      );
+    const now = Date.now();
 
-      setRemainingMs(difference);
-      endTimeRef.current = null;
-
-      setStatus(difference === 0 ? 'finished' : 'paused');
+    if (endTimeRef.current === null || segmentStartRef.current === null) {
+        return;
     }
 
-  }, [status]);
+    const remaining = Math.max(0, endTimeRef.current - now);
+    const elapsed =
+        elapsedBeforeSegmentRef.current +
+        (now - segmentStartRef.current);
 
-  // Reprendre
-  const resume = useCallback(() => {
+    setRemainingMs(remaining);
+    setElapsedMs(elapsed);
 
-    if (status !== 'paused' || remainingMs <= 0) return;
-
-    endTimeRef.current = Date.now() + remainingMs;
-
-    setStatus('running');
-
-  }, [status, remainingMs]);
-
-  // Réinitialiser
-  const reset = useCallback((minutes?: number) => {
+    elapsedBeforeSegmentRef.current = elapsed;
 
     endTimeRef.current = null;
+    segmentStartRef.current = null;
 
-    const newDuration = minutes !== undefined
-      ? minutes
-      : initialMinutes;
+    setStatus(remaining === 0 ? 'finished' : 'paused');
+  }, [status]);
 
-    setRemainingMs(newDuration * 60 * 1000);
+  const resume = useCallback(() => {
+    if (status !== 'paused' || remainingMs <= 0) return;
 
+    const now = Date.now();
+    segmentStartRef.current = now;
+    endTimeRef.current = now + remainingMs;
+
+    setStatus('running');
+  }, [status, remainingMs]);
+
+  const reset = useCallback(() => {
+    endTimeRef.current = null;
+    segmentStartRef.current = null;
+    elapsedBeforeSegmentRef.current = elapsedMs;
+
+    setRemainingMs(totalMs);
     setStatus('idle');
+  }, [totalMs, elapsedMs]);
 
-  }, [initialMinutes]);
-
-  // Actualisation du compteur et gestion de l'arrière-plan
   useEffect(() => {
-
     if (status !== 'running') return;
 
-    const interval = setInterval(() => {
-      updateTimer();
-    }, 250);
-
-    const subscription = AppState.addEventListener(
-      'change',
-      (nextAppState) => {
-
-        if (nextAppState === 'active') {
-          updateTimer();
-        }
-
-      }
-    );
-
-    // Vérification immédiate
     updateTimer();
 
-    return () => {
-      clearInterval(interval);
-      subscription.remove();
-    };
+    const interval = setInterval(updateTimer, 250);
 
+    return () => clearInterval(interval);
   }, [status, updateTimer]);
 
-  // Conversion millisecondes -> MM:SS
-  const totalSeconds = Math.ceil(remainingMs / 1000);
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', nextState => {
+      if (nextState === 'active') {
+        updateTimer();
+      }
+    });
 
-  const minutes = Math.floor(totalSeconds / 60);
+    return () => subscription.remove();
+  }, [updateTimer]);
 
-  const seconds = totalSeconds % 60;
+  const formattedTime = (() => {
+    const seconds = Math.ceil(remainingMs / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const rest = seconds % 60;
 
-  const formattedTime =
-    `${String(minutes).padStart(2, '0')}:` +
-    `${String(seconds).padStart(2, '0')}`;
+    return `${String(minutes).padStart(2, '0')}:${String(rest).padStart(2, '0')}`;
+  })();
 
   return {
     remainingMs,
+    elapsedMs,
+    elapsedSeconds: Math.floor(elapsedMs / 1000),
     status,
     formattedTime,
-
     start,
     pause,
     resume,
     reset,
   };
-
 }
