@@ -17,7 +17,12 @@ import {
 
 import TaskCard from '../components/TaskCard';
 
+
 import FocusScreen from './FocusScreen';
+
+
+import EvaluationScreen from './EvaluationScreen';
+
 
 import { Task, TaskFormData, TaskPriority } from '../types/task';
 
@@ -41,6 +46,12 @@ export default function HomeScreen() {
   const [description, setDescription] = useState('');
   const [estimatedMinutes, setEstimatedMinutes] = useState('30');
   const [priority, setPriority] = useState<TaskPriority>('medium');
+
+
+    const [currentScreen, setCurrentScreen] = useState<'home' | 'focus' | 'evaluation'>('home');
+    const [sessionMinutes, setSessionMinutes] = useState<number | undefined>(undefined);
+    const [evaluationActualSeconds, setEvaluationActualSeconds] = useState(0);
+
 
   // CHARGEMENT INITIAL
   useEffect(() => {
@@ -292,6 +303,105 @@ export default function HomeScreen() {
 
   };
 
+  // DÉMARRER UNE SESSION DE FOCUS
+    const startFocus = () => {
+        if (!activeTask) {
+            Alert.alert('Aucune tâche', 'Sélectionne d’abord une tâche.');
+            return;
+        }
+
+        setSessionMinutes(undefined);
+        setCurrentScreen('focus');
+    };
+
+    // GÉRER LA FIN D'UNE SESSION DE FOCUS
+    const handleFocusFinished = (sessionActualSeconds: number) => {
+        if (!activeTask) return;
+
+        const totalActualSeconds = (activeTask.actualSeconds ?? 0) + sessionActualSeconds;
+
+        setTasks(previous =>
+            previous.map(task =>
+            task.id === activeTask.id
+                ? {
+                    ...task,
+                    actualSeconds: totalActualSeconds,
+                    updatedAt: new Date().toISOString(),
+                }
+                : task
+            )
+        );
+
+        setEvaluationActualSeconds(totalActualSeconds);
+        setCurrentScreen('evaluation');
+    };
+
+    // GÉRER LA FIN D'UNE TÂCHE
+    const handleTaskCompleted = (rating: number) => {
+        if (!activeTask) return;
+
+        setTasks(previous =>
+            previous.map(task =>
+            task.id === activeTask.id
+                ? {
+                    ...task,
+                    status: 'completed',
+                    rating,
+                    updatedAt: new Date().toISOString(),
+                }
+                : task
+            )
+        );
+
+        setActiveTaskId(null);
+        setSessionMinutes(undefined);
+        setCurrentScreen('home');
+    };
+
+
+    // GÉRER L'AJOUT DE TEMPS À UNE TÂCHE
+    const handleAddTime = (rating: number, minutes: number) => {
+    if (!activeTask) return;
+
+    setTasks(previous =>
+        previous.map(task =>
+        task.id === activeTask.id
+            ? {
+                ...task,
+                rating,
+                updatedAt: new Date().toISOString(),
+            }
+            : task
+        )
+    );
+
+    setSessionMinutes(minutes);
+    setCurrentScreen('focus');
+    };
+
+    // GÉRER LE REPORT D'UNE TÂCHE
+    const handlePostpone = (rating: number) => {
+    if (!activeTask) return;
+
+    setTasks(previous =>
+        previous.map(task =>
+        task.id === activeTask.id
+            ? {
+                ...task,
+                status: 'postponed',
+                rating,
+                updatedAt: new Date().toISOString(),
+            }
+            : task
+        )
+    );
+
+    setActiveTaskId(null);
+    setSessionMinutes(undefined);
+    setCurrentScreen('home');
+    };
+
+
   // FILTRER LES TÂCHES
   const filteredTasks = tasks.filter(task => {
 
@@ -317,20 +427,44 @@ export default function HomeScreen() {
   );
 
   // ÉCRAN DE CHARGEMENT
-  if (loading) {
+    if (loading) {
+        return (
+            <SafeAreaView style={styles.safeArea}>
+            <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color="#FF923E" />
+                <Text style={styles.loadingText}>
+                Loading your tasks...
+                </Text>
+            </View>
+            </SafeAreaView>
+        );
+    }
 
-    return (
-      <SafeAreaView style={styles.safeArea}>
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#FF923E" />
-          <Text style={styles.loadingText}>
-            Loading your tasks...
-          </Text>
-        </View>
-      </SafeAreaView>
-    );
+    // ÉCRAN FOCUS
+    if (currentScreen === 'focus' && activeTask) {
+        return (
+            <FocusScreen
+            key={`${activeTask.id}-${sessionMinutes ?? 'initial'}`}
+            task={activeTask}
+            sessionMinutes={sessionMinutes}
+            onBack={() => setCurrentScreen('home')}
+            onFinished={handleFocusFinished}
+            />
+        );
+    }
 
-  }
+    // ÉCRAN ÉVALUATION
+    if (currentScreen === 'evaluation' && activeTask) {
+        return (
+            <EvaluationScreen
+            task={activeTask}
+            actualSeconds={evaluationActualSeconds}
+            onComplete={handleTaskCompleted}
+            onAddTime={handleAddTime}
+            onPostpone={handlePostpone}
+            />
+        );
+    }
 
   return (
 
@@ -414,13 +548,26 @@ export default function HomeScreen() {
             </Text>
 
             <Pressable
+                style={styles.startFocusButton}
+                onPress={startFocus}
+                >
+                <Text style={styles.startFocusButtonText}>
+                    ▶ Start working
+                </Text>
+            </Pressable>
+
+            {/* <Pressable
                 style={styles.focusButton}
                 onPress={() => setShowFocus(true)}
             >
             <Text style={styles.focusButtonText}>
                 ▶  Start focus
             </Text>
-            </Pressable>
+            </Pressable> */}
+
+
+            
+
 
           </View>
         )}
@@ -538,25 +685,34 @@ export default function HomeScreen() {
             display: showFocus ? 'flex' : 'none',
             }}
         >
-            <FocusScreen
-            key={activeTask.id}
-            task={activeTask}
-            onBack={() => setShowFocus(false)}
-            onFinished={(actualSeconds) => {
-                setTasks(previous =>
-                previous.map(item =>
-                    item.id === activeTask.id
-                    ? {
-                        ...item,
-                        actualSeconds:
-                            (item.actualSeconds ?? 0) + actualSeconds,
-                        updatedAt: new Date().toISOString(),
-                        }
-                    : item
-                )
-                );
-            }}
-            />
+            {activeTask && (
+  <View
+    style={{
+      flex: 1,
+      display: showFocus ? 'flex' : 'none',
+        }}
+    >
+        <FocusScreen
+        key={activeTask.id}
+        task={activeTask}
+        onBack={() => setShowFocus(false)}
+        onFinished={(actualSeconds) => {
+            setTasks(previous =>
+            previous.map(item =>
+                item.id === activeTask.id
+                ? {
+                    ...item,
+                    actualSeconds:
+                        (item.actualSeconds ?? 0) + actualSeconds,
+                    updatedAt: new Date().toISOString(),
+                    }
+                : item
+            )
+            );
+        }}
+        />
+    </View>
+    )}
         </View>
         )}
 
@@ -1027,5 +1183,20 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '900',
  },
+
+startFocusButton: {
+  backgroundColor: '#FFFFFF',
+  paddingVertical: 13,
+  borderRadius: 13,
+  alignItems: 'center',
+  marginTop: 15,
+},
+
+startFocusButtonText: {
+  color: '#D97829',
+  fontSize: 13,
+  fontWeight: '900',
+},
+
 
 });

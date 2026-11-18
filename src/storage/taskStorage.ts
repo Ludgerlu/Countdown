@@ -8,17 +8,25 @@ const ACTIVE_TASK_KEY = '@countdown/active_task';
 export const taskStorage = {
 
   // Récupérer toutes les tâches
-  async getTasks(): Promise<Task[]> {
-    try {
-      const data = await AsyncStorage.getItem(TASKS_KEY);
+  
+async getTasks(): Promise<Task[]> {
+  try {
+    const data = await AsyncStorage.getItem(TASKS_KEY);
 
-      return data ? JSON.parse(data) : [];
+    if (!data) return [];
 
-    } catch (error) {
-      console.error('Erreur de lecture des tâches:', error);
-      return [];
-    }
-  },
+    const tasks: Task[] = JSON.parse(data);
+
+    return tasks.map(task => ({
+      ...task,
+      actualSeconds: task.actualSeconds ?? 0,
+    }));
+  } catch (error) {
+    console.error('Erreur de lecture des tâches:', error);
+    return [];
+  }
+},
+
 
   // Enregistrer les tâches
   async saveTasks(tasks: Task[]): Promise<void> {

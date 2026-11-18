@@ -14,12 +14,14 @@ import { useCountdown } from '../hooks/useCountdown';
 
 interface Props {
   task: Task;
+  sessionMinutes?: number;
   onBack: () => void;
   onFinished: (actualSeconds: number) => void;
 }
 
 export default function FocusScreen({
   task,
+  sessionMinutes,
   onBack,
   onFinished,
 }: Props) {
@@ -31,7 +33,7 @@ export default function FocusScreen({
     pause,
     resume,
     reset,
-  } = useCountdown(task.estimatedMinutes);
+} = useCountdown(sessionMinutes ?? task.estimatedMinutes);
 
   const finishedRef = useRef(false);
   const onFinishedRef = useRef(onFinished);
