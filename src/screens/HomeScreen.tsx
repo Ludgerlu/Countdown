@@ -11,14 +11,39 @@ import {
   ScrollView,
 } from 'react-native';
 
+import useCountdown from '../hooks/useCountdown';
+
 const durations = [1, 5, 10, 15, 30];
 
 export default function HomeScreen() {
 
   const [selectedMinutes, setSelectedMinutes] = useState(5);
 
+  const {
+    status,
+    formattedTime,
+    start,
+    pause,
+    resume,
+    reset,
+  } = useCountdown(selectedMinutes);
+
+  // Changer la durée
+  const selectDuration = (duration: number) => {
+    if (status !== 'idle') return;
+
+    setSelectedMinutes(duration);
+    reset(duration);
+  };
+
+  // Réinitialiser le compteur
+  const handleReset = () => {
+    reset(selectedMinutes);
+  };
+
   return (
     <SafeAreaView style={styles.safeArea}>
+
       <StatusBar
         barStyle="dark-content"
         backgroundColor="#FFF5E9"
@@ -57,17 +82,29 @@ export default function HomeScreen() {
               YOUR COUNTDOWN
             </Text>
 
-            <View style={styles.statusBadge}>
+            <View style={[
+              styles.statusBadge,
+              status === 'running' && styles.runningBadge,
+              status === 'paused' && styles.pausedBadge,
+              status === 'finished' && styles.finishedBadge,
+            ]}>
               <Text style={styles.statusText}>
-                READY
+                {status === 'idle' && 'READY'}
+                {status === 'running' && 'RUNNING'}
+                {status === 'paused' && 'PAUSED'}
+                {status === 'finished' && 'FINISHED'}
               </Text>
             </View>
           </View>
 
           {/* TIMER DISPLAY */}
           <View style={styles.timerContainer}>
-            <Text style={styles.timer}>
-              {String(selectedMinutes).padStart(2, '0')}:00
+
+            <Text style={[
+              styles.timer,
+              status === 'finished' && styles.finishedTimer,
+            ]}>
+              {formattedTime}
             </Text>
 
             <Text style={styles.timerDescription}>
@@ -75,8 +112,9 @@ export default function HomeScreen() {
             </Text>
 
             <Text style={styles.hourglass}>
-              ⏳
+              {status === 'finished' ? '🎉' : '⏳'}
             </Text>
+
           </View>
 
           {/* DURATION SELECTOR */}
@@ -85,46 +123,109 @@ export default function HomeScreen() {
           </Text>
 
           <View style={styles.durationContainer}>
-            {durations.map((duration) => (
 
-              <Pressable
-                key={duration}
-                onPress={() => setSelectedMinutes(duration)}
-                style={[
-                  styles.durationButton,
-                  selectedMinutes === duration &&
-                    styles.durationButtonActive,
-                ]}
-              >
-                <Text
+            {durations.map((duration) => {
+
+              const isSelected = selectedMinutes === duration;
+
+              return (
+                <Pressable
+                  key={duration}
+                  disabled={status !== 'idle'}
+                  onPress={() => selectDuration(duration)}
                   style={[
-                    styles.durationText,
-                    selectedMinutes === duration &&
-                      styles.durationTextActive,
+                    styles.durationButton,
+                    isSelected && styles.durationButtonActive,
+                    status !== 'idle' && styles.disabledButton,
                   ]}
                 >
-                  {duration} min
-                </Text>
-              </Pressable>
+                  <Text style={[
+                    styles.durationText,
+                    isSelected && styles.durationTextActive,
+                  ]}>
+                    {duration} min
+                  </Text>
+                </Pressable>
+              );
 
-            ))}
+            })}
+
           </View>
 
-          {/* START BUTTON */}
-          <Pressable
-            style={({ pressed }) => [
-              styles.startButton,
-              pressed && styles.buttonPressed,
-            ]}
-            onPress={() => {}}
-          >
-            <Text style={styles.startButtonText}>
-              ▶  Start
-            </Text>
-          </Pressable>
+          {/* CONTROL BUTTONS */}
+          <View style={styles.controls}>
 
+            {status === 'idle' && (
+              <Pressable
+                style={styles.startButton}
+                onPress={start}
+              >
+                <Text style={styles.mainButtonText}>
+                  ▶  Start
+                </Text>
+              </Pressable>
+            )}
+
+            {status === 'running' && (
+              <Pressable
+                style={[styles.startButton, styles.pauseButton]}
+                onPress={pause}
+              >
+                <Text style={styles.mainButtonText}>
+                  ⏸  Pause
+                </Text>
+              </Pressable>
+            )}
+
+            {status === 'paused' && (
+              <Pressable
+                style={styles.startButton}
+                onPress={resume}
+              >
+                <Text style={styles.mainButtonText}>
+                  ▶  Resume
+                </Text>
+              </Pressable>
+            )}
+
+            {status === 'finished' && (
+              <Pressable
+                style={[styles.startButton, styles.finishedButton]}
+                onPress={handleReset}
+              >
+                <Text style={styles.mainButtonText}>
+                  ↻  Restart
+                </Text>
+              </Pressable>
+            )}
+
+            {/* RESET BUTTON */}
+            {status !== 'idle' && status !== 'finished' && (
+              <Pressable
+                style={styles.resetButton}
+                onPress={handleReset}
+              >
+                <Text style={styles.resetButtonText}>
+                  ↻ Reset
+                </Text>
+              </Pressable>
+            )}
+
+          </View>
+
+          {/* FOOTER MESSAGE */}
           <Text style={styles.cardFooter}>
-            Take a breath. Enjoy the moment.
+            {status === 'idle' &&
+              'Take a breath. Enjoy the moment.'}
+
+            {status === 'running' &&
+              'Stay focused. You got this! 💪'}
+
+            {status === 'paused' &&
+              'Take your time. Ready when you are.'}
+
+            {status === 'finished' &&
+              'Time is up! Great job! 🎊'}
           </Text>
 
         </View>
@@ -234,6 +335,18 @@ const styles = StyleSheet.create({
     borderRadius: 20,
   },
 
+  runningBadge: {
+    backgroundColor: '#E4F2FF',
+  },
+
+  pausedBadge: {
+    backgroundColor: '#FFF0D6',
+  },
+
+  finishedBadge: {
+    backgroundColor: '#FFE5E5',
+  },
+
   statusText: {
     color: '#3A9B55',
     fontSize: 10,
@@ -250,6 +363,10 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     color: '#302923',
     fontVariant: ['tabular-nums'],
+  },
+
+  finishedTimer: {
+    color: '#FF923E',
   },
 
   timerDescription: {
@@ -289,6 +406,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#FF923E',
   },
 
+  disabledButton: {
+    opacity: 0.6,
+  },
+
   durationText: {
     fontSize: 13,
     fontWeight: '700',
@@ -299,23 +420,48 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
 
+  controls: {
+    marginTop: 28,
+    gap: 12,
+  },
+
   startButton: {
     backgroundColor: '#FF923E',
     paddingVertical: 18,
     borderRadius: 18,
     alignItems: 'center',
-    marginTop: 28,
+  },
+
+  pauseButton: {
+    backgroundColor: '#D99035',
+  },
+
+  finishedButton: {
+    backgroundColor: '#42A66A',
+  },
+
+  mainButtonText: {
+    color: '#FFFFFF',
+    fontSize: 17,
+    fontWeight: '900',
+  },
+
+  resetButton: {
+    backgroundColor: '#FFF0E1',
+    paddingVertical: 15,
+    borderRadius: 16,
+    alignItems: 'center',
+  },
+
+  resetButtonText: {
+    color: '#8E6D55',
+    fontSize: 15,
+    fontWeight: '800',
   },
 
   buttonPressed: {
     opacity: 0.75,
     transform: [{ scale: 0.98 }],
-  },
-
-  startButtonText: {
-    color: '#FFFFFF',
-    fontSize: 17,
-    fontWeight: '900',
   },
 
   cardFooter: {
